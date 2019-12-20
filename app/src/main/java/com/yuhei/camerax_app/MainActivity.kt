@@ -16,7 +16,9 @@ import androidx.camera.core.*
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import java.io.File
+import java.nio.ByteBuffer
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
 
@@ -97,7 +99,16 @@ class MainActivity : AppCompatActivity() {
                     }
                 })
         }
-        CameraX.bindToLifecycle(this, preview, imageCapture)
+
+        val analyzerConfig = ImageAnalysisConfig.Builder().apply {
+            setImageReaderMode(ImageAnalysis.ImageReaderMode.ACQUIRE_LATEST_IMAGE)
+        }.build()
+
+        val analyzerUsecase = ImageAnalysis(analyzerConfig).apply {
+            setAnalyzer(executor, LuminosityAnalyzer())
+        }
+
+        CameraX.bindToLifecycle(this, preview, imageCapture, analyzerUsecase)
     }
 
     private fun updateTransform() {
@@ -137,5 +148,29 @@ class MainActivity : AppCompatActivity() {
         ContextCompat.checkSelfPermission(
             baseContext, it
         ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private class LuminosityAnalyzer : ImageAnalysis.Analyzer {
+        private var lastAnalyzedTimestamp = 0L
+
+        private fun ByteBuffer.toByteArray(): ByteArray {
+            rewind()
+            val data = ByteArray(remaining())
+            get(data)
+            return data
+        }
+
+        override fun analyze(image: ImageProxy, rotationDegrees: Int) {
+            val currentTimestamp = System.currentTimeMillis()
+
+            if (currentTimestamp - lastAnalyzedTimestamp >= TimeUnit.SECONDS.toMillis(1)) {
+                val buffer = image.planes[0].buffer
+                val data = buffer.toByteArray()
+                val pixels = data.map { it.toInt() and 0xFF }
+                val luma = pixels.average()
+                Log.d("Camera X App", "Average luminosity: $luma")
+                lastAnalyzedTimestamp = currentTimestamp
+            }
+        }
     }
 }
